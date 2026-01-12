@@ -1,6 +1,398 @@
-ESTE ARCHIVO TIENE QUE SER EDITADO
+Option Explicit
 
-ahora si esta editado
+Sub GenerarMatriz()
+    ' --- (Este código es igual al anterior, no cambia) ---
+    Dim wsConf As Worksheet, wsMat As Worksheet
+    Dim nProd As Integer, nMaq As Integer
+    Dim i As Integer, j As Integer
+    
+    Set wsConf = Sheets("Configuracion")
+    Set wsMat = Sheets("Matriz")
+    
+    nProd = wsConf.Range("B2").Value
+    nMaq = wsConf.Range("B3").Value
+    
+    If nProd < 1 Or nMaq < 1 Then MsgBox "Datos inválidos en Configuración": Exit Sub
+    
+    wsMat.Cells.Clear
+    wsMat.Range("A1").Value = "MATRIZ DE TIEMPOS (min/unidad)"
+    wsMat.Range("A1").Font.Bold = True
+    
+    wsMat.Cells(2, 1).Value = "DEMANDA (Dj) ->"
+    wsMat.Cells(2, 1).Font.Color = vbBlue
+    
+    For j = 1 To nProd
+        wsMat.Cells(1, j + 1).Value = "Prod " & Chr(64 + j)
+        wsMat.Cells(1, j + 1).Font.Bold = True
+        wsMat.Cells(1, j + 1).Interior.Color = RGB(220, 230, 241)
+        wsMat.Cells(2, j + 1).Value = 0
+        wsMat.Cells(2, j + 1).Font.Color = vbBlue
+    Next j
+    
+    For i = 1 To nMaq
+        wsMat.Cells(i + 2, 1).Value = "Máquina " & i
+        wsMat.Cells(i + 2, 1).Font.Bold = True
+        wsMat.Cells(i + 2, 1).Interior.Color = RGB(220, 230, 241)
+        wsMat.Range(wsMat.Cells(i + 2, 2), wsMat.Cells(i + 2, nProd + 1)).Borders.LineStyle = xlContinuous
+    Next i
+    
+    wsConf.Range("C5").Value = "<-- Pon 1 para diario o 30 para mes (Horizonte)"
+    wsMat.Columns.AutoFit
+    MsgBox "Matriz generada. Llene Tiempos y Demandas.", vbInformation
+End Sub
+
+Sub CalcularHilario()
+    Dim wsConf As Worksheet, wsMat As Worksheet, wsRes As Worksheet
+    Dim nProd As Integer, nMaq As Integer
+    Dim T_Base As Double, Horizonte As Double
+    Dim i As Integer, j As Integer
+    Dim Demanda As Double, Tiempo As Double, Capacidad As Double
+    Dim SumaFraccion As Double
+    Dim N_Teorico As Double, N_Real As Integer
+    
+    Set wsConf = Sheets("Configuracion")
+    Set wsMat = Sheets("Matriz")
+    Set wsRes = Sheets("Resultados")
+    
+    ' Leer Datos
+    nProd = wsConf.Range("B2").Value
+    nMaq = wsConf.Range("B3").Value
+    T_Base = wsConf.Range("B4").Value
+    Horizonte = wsConf.Range("B5").Value
+    
+    wsRes.Cells.Clear
+    wsRes.Range("A1").Value = "REPORTE DE SOLUCIÓN MULTI-PRODUCTO"
+    wsRes.Range("A1").Font.Size = 14
+    wsRes.Range("A1").Font.Bold = True
+    
+    ' ==========================================
+    ' PASO A: NÚMERO DE MÁQUINAS
+    ' ==========================================
+    wsRes.Range("A3").Value = "A) NÚMERO DE MÁQUINAS (Cálculo de Capacidad)"
+    wsRes.Range("A3").Font.Bold = True
+    wsRes.Range("A4").Value = "Estación"
+    wsRes.Range("B4").Value = "N Teórico"
+    wsRes.Range("C4").Value = "N Real"
+    wsRes.Range("D4").Value = "Cap. Instalada (min)"
+    wsRes.Range("A4:D4").Interior.Color = RGB(200, 200, 200)
+    
+    Dim ArrayNReal() As Integer
+    ReDim ArrayNReal(1 To nMaq)
+    
+    For i = 1 To nMaq
+        SumaFraccion = 0
+        For j = 1 To nProd
+            Demanda = wsMat.Cells(2, j + 1).Value
+            Tiempo = wsMat.Cells(i + 2, j + 1).Value
+            If Tiempo > 0 Then
+                Capacidad = T_Base / Tiempo
+                SumaFraccion = SumaFraccion + (Demanda / Capacidad)
+            End If
+        Next j
+        
+        N_Teorico = SumaFraccion
+        N_Real = Application.WorksheetFunction.Round(N_Teorico, 0)
+        If N_Teorico > 0 And N_Real = 0 Then N_Real = 1
+        
+        ArrayNReal(i) = N_Real
+        
+        wsRes.Cells(i + 4, 1).Value = "Máquina " & i
+        wsRes.Cells(i + 4, 2).Value = N_Teorico
+        wsRes.Cells(i + 4, 2).NumberFormat = "0.000"
+        wsRes.Cells(i + 4, 3).Value = N_Real
+        wsRes.Cells(i + 4, 3).Font.Bold = True
+        wsRes.Cells(i + 4, 3).Font.Color = vbRed
+        wsRes.Cells(i + 4, 4).Value = N_Real * T_Base * Horizonte
+        wsRes.Cells(i + 4, 4).NumberFormat = "#,##0"
+    Next i
+    
+    ' ==========================================
+    ' PASO B: TIEMPOS BASE
+    ' ==========================================
+    Dim FilaB As Integer
+    FilaB = nMaq + 7
+    wsRes.Cells(FilaB, 1).Value = "B) TIEMPOS BASE ASIGNADOS (Días)"
+    wsRes.Cells(FilaB, 1).Font.Bold = True
+    
+    wsRes.Cells(FilaB + 1, 1).Value = "Máq \ Prod"
+    For j = 1 To nProd
+        wsRes.Cells(FilaB + 1, j + 1).Value = wsMat.Cells(1, j + 1).Value
+        wsRes.Cells(FilaB + 1, j + 1).Interior.Color = RGB(220, 230, 241)
+    Next j
+    
+    Dim T_Asignado As Double
+    Dim MatrizDetalleFformulas() As String
+    ReDim MatrizDetalleFformulas(1 To nMaq, 1 To nProd)
+    
+    For i = 1 To nMaq
+        wsRes.Cells(FilaB + 1 + i, 1).Value = "Máquina " & i
+        N_Real = ArrayNReal(i)
+        
+        For j = 1 To nProd
+            Demanda = wsMat.Cells(2, j + 1).Value
+            Tiempo = wsMat.Cells(i + 2, j + 1).Value
+            
+            If N_Real > 0 And Tiempo > 0 Then
+                T_Asignado = (Demanda * Tiempo * Horizonte) / (N_Real * T_Base)
+                wsRes.Cells(FilaB + 1 + i, j + 1).Value = T_Asignado
+                MatrizDetalleFformulas(i, j) = "(" & Demanda & "*" & Tiempo & "*" & Horizonte & ")/(" & N_Real & "*" & T_Base & ")"
+            Else
+                wsRes.Cells(FilaB + 1 + i, j + 1).Value = 0
+                MatrizDetalleFformulas(i, j) = "-"
+            End If
+            wsRes.Cells(FilaB + 1 + i, j + 1).NumberFormat = "0.00"
+        Next j
+    Next i
+    
+    ' ==========================================
+    ' PASO C: INDICADORES POR LÍNEA DE PRODUCTO
+    ' ==========================================
+    Dim FilaC As Integer
+    FilaC = FilaB + nMaq + 4
+    
+    wsRes.Cells(FilaC, 1).Value = "C) INDICADORES POR LÍNEA (Análisis Individual)"
+    wsRes.Cells(FilaC, 1).Font.Bold = True
+    
+    ' Encabezados
+    wsRes.Cells(FilaC + 1, 1).Value = "Producto"
+    wsRes.Cells(FilaC + 1, 2).Value = "Suma Tiempos (min)"
+    wsRes.Cells(FilaC + 1, 3).Value = "Ciclo (c)"
+    wsRes.Cells(FilaC + 1, 4).Value = "Producción (60/c)"
+    wsRes.Cells(FilaC + 1, 5).Value = "Estaciones (n)"
+    wsRes.Cells(FilaC + 1, 6).Value = "Tiempo Muerto"
+    wsRes.Cells(FilaC + 1, 7).Value = "Eficiencia (%)"
+    wsRes.Range("A" & FilaC + 1 & ":G" & FilaC + 1).Interior.Color = RGB(255, 230, 153)
+    
+    Dim MaxCiclo As Double, SumaT As Double, CountEst As Integer
+    Dim ProdRate As Double, TMuerto As Double, Eficiencia As Double
+    
+    For j = 1 To nProd
+        MaxCiclo = 0
+        SumaT = 0
+        CountEst = 0
+        
+        ' Recorrer la columna del producto para hallar datos
+        For i = 1 To nMaq
+            Tiempo = wsMat.Cells(i + 2, j + 1).Value
+            If Tiempo > 0 Then
+                SumaT = SumaT + Tiempo
+                CountEst = CountEst + 1 ' Contamos estaciones activas para este producto
+                If Tiempo > MaxCiclo Then MaxCiclo = Tiempo
+            End If
+        Next i
+        
+        ' Escribir Nombre Producto
+        wsRes.Cells(FilaC + 1 + j, 1).Value = wsMat.Cells(1, j + 1).Value
+        wsRes.Cells(FilaC + 1 + j, 1).Font.Bold = True
+        
+        If MaxCiclo > 0 Then
+            ' Cálculos solicitados
+            ProdRate = 60 / MaxCiclo
+            TMuerto = (CountEst * MaxCiclo) - SumaT
+            Eficiencia = (SumaT / (CountEst * MaxCiclo))
+            
+            wsRes.Cells(FilaC + 1 + j, 2).Value = SumaT
+            wsRes.Cells(FilaC + 1 + j, 3).Value = MaxCiclo
+            wsRes.Cells(FilaC + 1 + j, 4).Value = ProdRate
+            wsRes.Cells(FilaC + 1 + j, 5).Value = CountEst
+            wsRes.Cells(FilaC + 1 + j, 6).Value = TMuerto
+            wsRes.Cells(FilaC + 1 + j, 7).Value = Eficiencia
+            wsRes.Cells(FilaC + 1 + j, 7).NumberFormat = "0.00%"
+        Else
+            wsRes.Cells(FilaC + 1 + j, 2).Value = "Sin datos"
+        End If
+    Next j
+
+    ' ==========================================
+    ' DETALLE DE FÓRMULAS (Visualización)
+    ' ==========================================
+    Dim FilaFormula As Integer
+    FilaFormula = FilaC + nProd + 4
+    wsRes.Cells(FilaFormula, 1).Value = "DETALLE DE CÁLCULO TIEMPOS BASE (SUSTITUCIÓN)"
+    wsRes.Cells(FilaFormula, 1).Font.Bold = True
+    wsRes.Cells(FilaFormula, 1).Font.Color = RGB(100, 100, 100)
+    
+    For i = 1 To nMaq
+        wsRes.Cells(FilaFormula + i, 1).Value = "Máquina " & i
+        For j = 1 To nProd
+            wsRes.Cells(FilaFormula + i, j + 1).Value = MatrizDetalleFformulas(i, j)
+            wsRes.Cells(FilaFormula + i, j + 1).Font.Size = 8
+        Next j
+    Next i
+    
+    wsRes.Columns.AutoFit
+    wsRes.Activate
+    MsgBox "Cálculo Completado (Partes A, B y C).", vbInformation
+End Sub
 
 
-eeeeee
+Sub GenerarGanttPerfecto()
+    Dim wsRes As Worksheet, wsGantt As Worksheet
+    Dim nProd As Integer, nMaq As Integer
+    Dim HorizonteDias As Double
+    Dim i As Integer, j As Integer, k As Integer, m As Integer
+    Dim FilaInicioB As Integer, FilaActual As Integer, FilaInicioMaq As Integer
+    Dim ValorCelda As Range
+    Dim DiasDuracion As Double
+    Dim SemanasDuracion As Double, CursorSemana As Double
+    Dim ColumnaInicio As Integer, ColumnaFin As Integer
+    Dim UltimaColumnaFin As Integer
+    Dim SemanasEnteras As Integer
+    Dim ColorGris As Long, ColorBorde As Long
+    Dim NumMeses As Integer, TotalSemanas As Integer
+    Dim DiasPorMes As Double, DiasPorSemana As Double
+    
+    ' --- ESTILO ---
+    ColorGris = RGB(166, 166, 166)
+    ColorBorde = RGB(0, 0, 0)
+    
+    Set wsRes = Sheets("Resultados")
+    
+    ' 1. OBTENER DATOS
+    nProd = Sheets("Configuracion").Range("B2").Value
+    nMaq = Sheets("Configuracion").Range("B3").Value
+    HorizonteDias = Sheets("Configuracion").Range("B5").Value
+    
+    Set ValorCelda = wsRes.Columns(1).Find("B) TIEMPOS BASE ASIGNADOS", LookAt:=xlPart)
+    If ValorCelda Is Nothing Then MsgBox "Calcula primero.", vbCritical: Exit Sub
+    FilaInicioB = ValorCelda.Row + 2
+    
+    ' 2. ESCALA (Base 20 Días)
+    DiasPorMes = 20
+    NumMeses = Application.WorksheetFunction.RoundUp(HorizonteDias / DiasPorMes, 0)
+    TotalSemanas = NumMeses * 4
+    DiasPorSemana = DiasPorMes / 4
+    
+    ' 3. PREPARAR HOJA
+    Application.DisplayAlerts = False
+    On Error Resume Next
+    Sheets("Cronograma").Delete
+    On Error GoTo 0
+    Application.DisplayAlerts = True
+    
+    Set wsGantt = Sheets.Add(After:=Sheets(Sheets.Count))
+    wsGantt.Name = "Cronograma"
+    wsGantt.Cells.Font.Name = "Arial"
+    wsGantt.Cells.Font.Size = 8
+    
+    ' Título
+    wsGantt.Range("A1").Value = "PROGRAMA DE PRODUCCIÓN (" & HorizonteDias & " Días)"
+    wsGantt.Range("A1").Font.Bold = True
+    wsGantt.Range("A1").Font.Size = 12
+    
+    ' 4. CABECERAS
+    wsGantt.Cells(3, 1).Value = "ESTACIÓN"
+    wsGantt.Cells(3, 2).Value = "ARTÍCULO"
+    wsGantt.Range("A3:B3").Font.Bold = True
+    wsGantt.Range("A3:B3").Interior.Color = RGB(220, 220, 220)
+    wsGantt.Range("A3:B3").Borders.LineStyle = xlContinuous
+    
+    For m = 1 To NumMeses
+        Dim ColBase As Integer
+        ColBase = ((m - 1) * 4) + 3
+        
+        ' Mes
+        With wsGantt.Range(wsGantt.Cells(2, ColBase), wsGantt.Cells(2, ColBase + 3))
+            .Merge
+            .Value = "MES " & m
+            .HorizontalAlignment = xlCenter
+            .Font.Bold = True
+            .Interior.Color = RGB(242, 242, 242)
+            .Borders.LineStyle = xlContinuous
+        End With
+        
+        ' Semanas
+        For k = 1 To 4
+            With wsGantt.Cells(3, ColBase + k - 1)
+                .Value = k
+                .HorizontalAlignment = xlCenter
+                .Borders.LineStyle = xlContinuous
+            End With
+        Next k
+    Next m
+    
+    wsGantt.Columns(1).ColumnWidth = 12
+    wsGantt.Columns(2).ColumnWidth = 8
+    wsGantt.Range(wsGantt.Columns(3), wsGantt.Columns(TotalSemanas + 3)).ColumnWidth = 3.5
+    
+    ' 5. PINTAR BARRAS
+    FilaActual = 4
+    
+    For i = 1 To nMaq
+        FilaInicioMaq = FilaActual
+        CursorSemana = 3 ' Inicio Matemático
+        UltimaColumnaFin = 3 ' Imán Inicial
+        
+        For j = 1 To nProd
+            ' --- Nombre ---
+            wsGantt.Cells(FilaActual, 2).Value = wsRes.Cells(FilaInicioB - 1, j + 1).Value
+            wsGantt.Cells(FilaActual, 2).HorizontalAlignment = xlCenter
+            wsGantt.Cells(FilaActual, 2).Borders.LineStyle = xlContinuous
+            
+            ' --- Tiempo ---
+            DiasDuracion = wsRes.Cells(FilaInicioB + (i - 1), j + 1).Value
+            SemanasDuracion = DiasDuracion / DiasPorSemana
+            
+            ' 1. Calcular TAMAÑO VISUAL (SemanasEnteras)
+            SemanasEnteras = Application.WorksheetFunction.Round(SemanasDuracion, 0)
+            
+            If SemanasEnteras > 0 Then
+                ' 2. Calcular INICIO
+                ColumnaInicio = Int(CursorSemana)
+                
+                ' >>> LÓGICA DE IMÁN (Corrección de huecos) <<<
+                ' Si j > 1 (No es ProdA), forzamos pegarlo al anterior
+                If j > 1 Then
+                    If ColumnaInicio > UltimaColumnaFin Then
+                        ColumnaInicio = UltimaColumnaFin
+                    End If
+                End If
+                
+                ' >>> CORRECCIÓN FINAL (Lo que pediste) <<<
+                ' Calculamos el final basándonos en el INICIO YA AJUSTADO + TAMAÑO.
+                ' Esto evita que la barra se estire si movimos el inicio.
+                ColumnaFin = ColumnaInicio + SemanasEnteras - 1
+                
+                ' Validar limites hoja
+                If ColumnaFin > (TotalSemanas + 2) Then ColumnaFin = TotalSemanas + 2
+                
+                ' PINTAR
+                With wsGantt.Range(wsGantt.Cells(FilaActual, ColumnaInicio), wsGantt.Cells(FilaActual, ColumnaFin))
+                    .Interior.Color = ColorGris
+                    .Borders.LineStyle = xlContinuous
+                    .Borders.Color = ColorBorde
+                End With
+                
+                ' Guardar fin visual para el siguiente
+                UltimaColumnaFin = ColumnaFin
+                
+                ' Avanzar cursor matemático
+                CursorSemana = CursorSemana + SemanasDuracion
+            Else
+                ' Si duración es 0, mantener
+                CursorSemana = CursorSemana + SemanasDuracion
+            End If
+            
+            ' Rejilla vacía
+            wsGantt.Range(wsGantt.Cells(FilaActual, 3), wsGantt.Cells(FilaActual, TotalSemanas + 2)).Borders.LineStyle = xlContinuous
+            FilaActual = FilaActual + 1
+        Next j
+        
+        ' --- Máquina ---
+        With wsGantt.Range(wsGantt.Cells(FilaInicioMaq, 1), wsGantt.Cells(FilaActual - 1, 1))
+            .Merge
+            .Value = "MÁQUINA " & i
+            .VerticalAlignment = xlCenter
+            .HorizontalAlignment = xlCenter
+            .Font.Bold = True
+            .Interior.Color = RGB(220, 230, 241)
+            .Borders.LineStyle = xlContinuous
+            .Borders(xlEdgeBottom).Weight = xlMedium
+            wsGantt.Range(wsGantt.Cells(FilaActual - 1, 2), wsGantt.Cells(FilaActual - 1, TotalSemanas + 2)).Borders(xlEdgeBottom).Weight = xlMedium
+        End With
+    Next i
+    
+    wsGantt.Activate
+    ActiveWindow.DisplayGridlines = False
+    MsgBox "Cronograma Final Generado.", vbInformation
+End Sub
